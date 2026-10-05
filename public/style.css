@@ -232,6 +232,11 @@ body.ride { overflow: hidden; }
 .tag.lead { background: rgba(250, 204, 21, .18); color: #fde047; }
 .tag.host { background: rgba(255, 107, 44, .18); color: #ffb08a; }
 .rider-dist { text-align: right; flex: none; }
+.kick {
+  flex: none; width: 30px; height: 30px; border-radius: 50%; cursor: pointer;
+  border: 1px solid var(--line); background: transparent; color: var(--muted); font-size: 14px; line-height: 1;
+}
+.kick:hover { color: #fff; background: var(--danger); border-color: var(--danger); }
 .rider-dist strong { display: block; font-variant-numeric: tabular-nums; }
 .rider-dist small { color: var(--muted); font-size: 11px; }
 

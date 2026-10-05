@@ -88,6 +88,7 @@
               <button class="btn ghost" id="trailToggle">Hide trails</button>
               <a class="btn ghost" id="gmapsBtn" target="_blank" rel="noopener">Google Maps ↗</a>
               <button class="btn danger-ghost wide" id="leaveBtn">Leave ride</button>
+              <button class="btn ghost wide hidden" id="kickOfflineBtn">Remove offline riders</button>
               <button class="btn danger wide hidden" id="endRideBtn">🏁 End ride for everyone</button>
             </div>
 
@@ -135,6 +136,17 @@
       <h2>Ride ended</h2>
       <p class="muted" id="endedText">The host ended this ride.</p>
       <a href="/" class="btn primary block lg">Start a new ride</a>
+    </div>
+  </div>
+
+  <!-- Removed by host -->
+  <div class="modal hidden" id="kickedModal">
+    <div class="modal-card">
+      <div class="big-emoji">👋</div>
+      <h2>You were removed</h2>
+      <p class="muted">The host removed you from this ride. If that was a mistake, you can join again.</p>
+      <button class="btn primary block lg" id="rejoinBtn">Join again</button>
+      <a href="/" class="btn ghost block" style="margin-top:8px">Go home</a>
     </div>
   </div>
 

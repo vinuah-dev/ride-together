@@ -56,6 +56,7 @@
     retryTimer: null,
   };
   const hostKey = `rt_host_${rideId}`;
+  const rejoinKey = `rt_rejoin_${rideId}`;
 
   const map = createMap('map');
   let destMarker = null;
@@ -68,6 +69,7 @@
   // ---------- helpers ----------
   const hasPos = (m) => m && m.lat != null && m.lng != null;
   const isMe = (m) => m.id === memberId;
+  const amHost = () => !!state.members.get(memberId)?.host;
   const dest = () => state.ride?.destination || null;
   const destKey = (d) => (d ? `${d.lat},${d.lng}` : '');
 
@@ -288,15 +290,25 @@
             ${rem ? `<strong>${rem.road ? '' : '≈'}${fmtKm(rem.km)}</strong>` : ''}
             ${gap != null && gap > 0.05 ? `<small>+${fmtKm(gap)} behind</small>` : ''}
           </div>
+          ${amHost() && !isMe(m) ? `<button class="kick" data-kick="${escapeHtml(m.id)}" title="Remove ${escapeHtml(m.name)}" aria-label="Remove ${escapeHtml(m.name)}">✕</button>` : ''}
         </li>`;
       })
       .join('');
+  }
+
+  function renderHostControls() {
+    const host = amHost();
+    const offline = [...state.members.values()].filter((m) => !m.online && !isMe(m)).length;
+    $('endRideBtn').classList.toggle('hidden', !host);
+    $('kickOfflineBtn').classList.toggle('hidden', !host || !offline);
+    $('kickOfflineBtn').textContent = `Remove offline riders (${offline})`;
   }
 
   function renderAll() {
     renderHeader();
     renderStats();
     renderList();
+    renderHostControls();
   }
 
   function addFeed(text) {
@@ -698,9 +710,19 @@
   socket.on('connect', () => {
     socket.emit(
       'join',
-      { rideId, memberId, name: localStorage.getItem('rt_name'), sharing: state.sharing, seed: seed(), hostToken: localStorage.getItem(hostKey) },
+      {
+        rideId,
+        memberId,
+        name: localStorage.getItem('rt_name'),
+        sharing: state.sharing,
+        seed: seed(),
+        hostToken: localStorage.getItem(hostKey),
+        rejoin: sessionStorage.getItem(rejoinKey) === '1',
+      },
       (res) => {
         if (res?.error === 'ended') return showEnded();
+        if (res?.error === 'kicked') return showKicked();
+        sessionStorage.removeItem(rejoinKey);
         if (res?.error) {
           socket.disconnect();
           $('joinModal').classList.add('hidden');
@@ -733,7 +755,6 @@
     renderDestination();
     renderAll();
     updateShareToggle();
-    $('endRideBtn').classList.toggle('hidden', !state.members.get(memberId)?.host);
 
     if (first) {
       addFeed('You joined the ride');
@@ -789,6 +810,30 @@
   }
 
   socket.on('ended', ({ by }) => showEnded(by));
+
+  function showKicked() {
+    stopNav();
+    socket.disconnect();
+    if (watchId != null) navigator.geolocation.clearWatch(watchId);
+    watchId = null;
+    $('joinModal').classList.add('hidden');
+    closeModals();
+    openModal('kickedModal');
+  }
+
+  socket.on('kicked', ({ id }) => {
+    if (id === memberId) return showKicked();
+    const m = state.members.get(id);
+    if (m) {
+      toast(`${m.name} was removed by the host`);
+      addFeed(`${m.name} was removed`);
+    }
+    state.members.delete(id);
+    state.roads.delete(id);
+    removeMemberLayers(id);
+    if (nav.active && nav.target.kind === 'member' && nav.target.id === id) stopNav();
+    renderAll();
+  });
 
   socket.on('destination', ({ destination, by }) => {
     state.ride.destination = destination;
@@ -866,6 +911,16 @@
     say(nav.voice === 'hi' ? 'आवाज़ चालू' : 'Voice guidance on');
   });
 
+  $('kickOfflineBtn').addEventListener('click', () => {
+    if (!confirm('Remove everyone who is offline right now?')) return;
+    socket.emit('kick', { token: localStorage.getItem(hostKey), id: '*offline' });
+  });
+
+  $('rejoinBtn').addEventListener('click', () => {
+    sessionStorage.setItem(rejoinKey, '1');
+    location.reload();
+  });
+
   $('endRideBtn').addEventListener('click', () => {
     if (!confirm('End this ride for everyone? Nobody will be able to rejoin with this link.')) return;
     socket.emit('end', localStorage.getItem(hostKey));
@@ -888,6 +943,12 @@
   });
 
   $('riders').addEventListener('click', (e) => {
+    const kick = e.target.closest('[data-kick]');
+    if (kick) {
+      const m = state.members.get(kick.dataset.kick);
+      if (m && confirm(`Remove ${m.name} from the ride?`)) socket.emit('kick', { token: localStorage.getItem(hostKey), id: m.id });
+      return;
+    }
     const li = e.target.closest('.rider');
     if (li) {
       focusMember(li.dataset.id);

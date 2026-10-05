@@ -77,6 +77,7 @@ function createRide(id, name, destination) {
     destination: cleanDestination(destination),
     members: new Map(),
     conns: new Map(),
+    kicked: new Set(), // member ids the host removed
     lastActive: Date.now(),
   };
   rides.set(id, ride);
@@ -226,9 +227,17 @@ io.on('connection', (socket) => {
     }
     if (!target) return reply({ error: 'not_found' });
 
+    // Someone the host removed only gets back in by choosing to (not via an auto-reconnect).
+    const mid = str(payload?.memberId, 40) || socket.id;
+    if (target.kicked.has(mid)) {
+      if (!payload?.rejoin) return reply({ error: 'kicked' });
+      target.kicked.delete(mid);
+    }
+
     if (ride) detach();
     ride = target;
-    memberId = str(payload?.memberId, 40) || socket.id;
+    memberId = mid;
+    socket.data.memberId = mid;
 
     const existing = ride.members.get(memberId);
     const member = existing || {
@@ -316,6 +325,26 @@ io.on('connection', (socket) => {
     rides.delete(id);
     endedRides.set(id, Date.now());
     ride = null;
+  });
+
+  // Host removes a rider, or every offline rider with id '*offline'.
+  socket.on('kick', async (payload) => {
+    if (!ride || !isHost(ride.id, payload?.token)) return;
+    const current = ride;
+    const targets = payload.id === '*offline'
+      ? [...current.members.values()].filter((m) => !m.online).map((m) => m.id)
+      : [str(payload.id, 40)];
+    const removed = targets.filter((id) => id !== memberId && current.members.has(id));
+    for (const id of removed) {
+      current.members.delete(id);
+      current.conns.delete(id);
+      current.kicked.add(id);
+      io.to(current.id).emit('kicked', { id });
+    }
+    if (!removed.length) return;
+    // Their open tabs stop receiving everyone's locations.
+    const sockets = await io.in(current.id).fetchSockets();
+    sockets.filter((s) => removed.includes(s.data.memberId)).forEach((s) => s.leave(current.id));
   });
 
   socket.on('leave', () => {
