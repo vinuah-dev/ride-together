@@ -18,6 +18,14 @@
     regroup: ['📍', "Let's regroup here"],
     sos: ['🆘', 'SOS — needs help!'],
   };
+  // Read out when someone sends an alert. The Hindi lines avoid gendered verbs.
+  const PING_SPEECH = {
+    wait: { en: (n) => `${n} asked everyone to wait`, hi: (n) => `${n} ने रुकने के लिए कहा है` },
+    chai: { en: (n) => `${n} wants a chai break`, hi: (n) => `${n} ने चाय ब्रेक के लिए कहा है` },
+    fuel: { en: (n) => `${n} needs a fuel stop`, hi: (n) => `${n} ने पेट्रोल के लिए रुकने को कहा है` },
+    regroup: { en: (n) => `${n} wants everyone to regroup`, hi: (n) => `${n} ने सबको इकट्ठा होने के लिए कहा है` },
+    sos: { en: (n) => `S O S! ${n} needs help`, hi: (n) => `S O S! ${n} को मदद चाहिए` },
+  };
   const ARRIVED_KM = 0.2;
   const ROUTE_COLOR = '#2563eb';
 
@@ -465,15 +473,20 @@
     return hasPos(m) ? { lat: m.lat, lng: m.lng } : null;
   }
 
-  function say(text, queue = false) {
-    if (nav.voice === 'off' || !('speechSynthesis' in window) || !text) return;
-    const lang = nav.voice === 'hi' ? 'hi-IN' : 'en-IN';
+  function speak(text, lang, queue = false) {
+    if (!('speechSynthesis' in window) || !text) return;
+    const code = lang === 'hi' ? 'hi-IN' : 'en-IN';
     const u = new SpeechSynthesisUtterance(text);
-    u.lang = lang;
+    u.lang = code;
     const voices = speechSynthesis.getVoices();
-    u.voice = voices.find((v) => v.lang === lang) || voices.find((v) => v.lang.startsWith(lang.slice(0, 2))) || null;
+    u.voice = voices.find((v) => v.lang === code) || voices.find((v) => v.lang.startsWith(code.slice(0, 2))) || null;
     if (!queue) speechSynthesis.cancel();
     speechSynthesis.speak(u);
+  }
+
+  // Navigation prompts, in the language picked on the navigation banner.
+  function say(text, queue = false) {
+    if (nav.voice !== 'off') speak(text, nav.voice, queue);
   }
 
   // iOS only lets a page speak after it has spoken once inside a tap.
@@ -699,7 +712,7 @@
   }
 
   // Browsers only allow sound after a user gesture; unlock it on the first tap.
-  document.addEventListener('pointerdown', () => { beep(0); audioCtx?.resume?.(); }, { once: true });
+  document.addEventListener('pointerdown', () => { beep(0); audioCtx?.resume?.(); unlockSpeech(); }, { once: true });
 
   // ---------- socket ----------
   function join() {
@@ -859,17 +872,41 @@
     const msg = `${emoji} ${mine ? 'You' : p.name}: ${text}`;
     addFeed(msg);
     if (mine) return toast(`Sent to everyone: ${emoji} ${text}`);
+    const lang = nav.voice === 'hi' ? 'hi' : 'en';
+    const spoken = PING_SPEECH[p.kind]?.[lang](p.name);
     if (p.kind === 'sos') {
+      // SOS is a safety alert, so it sounds even when alert sounds are muted.
       toast(msg, { type: 'sos', ms: 10000 });
       beep(4, 1200);
       navigator.vibrate?.([300, 100, 300, 100, 600]);
+      setTimeout(() => speak(spoken, lang), 1000);
       if (p.lat != null) focusMember(p.from);
     } else {
       toast(msg, { color: p.color, ms: 5000 });
-      beep(2);
       navigator.vibrate?.([150, 80, 150]);
+      if (alertSound) {
+        beep(1);
+        // Queued so it doesn't cut off a navigation prompt that's playing.
+        setTimeout(() => speak(spoken, lang, true), 300);
+      }
     }
   });
+
+  let alertSound = localStorage.getItem('rt_alert_sound') !== 'off';
+  function renderAlertToggle() {
+    const b = $('alertToggle');
+    b.textContent = alertSound ? '🔔' : '🔕';
+    b.title = alertSound ? 'Alert sounds on (tap to mute)' : 'Alert sounds muted (tap to turn on)';
+    b.classList.toggle('muted', !alertSound);
+  }
+  $('alertToggle').addEventListener('click', () => {
+    alertSound = !alertSound;
+    localStorage.setItem('rt_alert_sound', alertSound ? 'on' : 'off');
+    renderAlertToggle();
+    toast(alertSound ? '🔔 Alert sounds on' : "🔕 Alert sounds muted. You'll still see alerts (SOS always sounds).");
+    if (alertSound) speak(nav.voice === 'hi' ? 'अलर्ट की आवाज़ चालू' : 'Alert sounds on', nav.voice === 'hi' ? 'hi' : 'en');
+  });
+  renderAlertToggle();
 
   // ---------- UI wiring ----------
   function openModal(id) { $(id).classList.remove('hidden'); }
