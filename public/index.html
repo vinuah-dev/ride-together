@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Ride Together</title>
+  <meta name="description" content="Mark a destination, share one link, and see your whole riding group live on the map.">
+  <meta name="theme-color" content="#0b1020">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🏍️</text></svg>">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body class="home">
+  <main class="home-wrap">
+    <section class="hero">
+      <div class="logo">🏍️</div>
+      <h1>Ride Together</h1>
+      <p>Mark the destination, share one link, and see the whole gang live on the map.</p>
+      <ol class="steps">
+        <li><span>1</span>Set destination</li>
+        <li><span>2</span>Share link</li>
+        <li><span>3</span>Ride together</li>
+      </ol>
+    </section>
+
+    <section class="card" id="createCard">
+      <h2>Start a new ride</h2>
+      <div class="field">
+        <label for="rideName">Ride name</label>
+        <input id="rideName" placeholder="Sunday Lonavala Ride" maxlength="60" autocomplete="off">
+      </div>
+      <div class="field">
+        <label for="yourName">Your name</label>
+        <input id="yourName" placeholder="e.g. Rahul" maxlength="30" autocomplete="nickname">
+      </div>
+      <div class="field">
+        <label for="destSearch">Destination</label>
+        <div class="search">
+          <input id="destSearch" placeholder="Search, or paste a Google Maps link" autocomplete="off">
+          <ul class="results" id="destResults"></ul>
+        </div>
+        <div class="chips" id="savedChips"></div>
+      </div>
+      <div class="pick-map-wrap">
+        <div id="pickMap" class="pick-map"></div>
+        <button class="map-chip" id="locateBtn" type="button">📍 Near me</button>
+      </div>
+      <p class="hint" id="destLabel">Search, paste a Google Maps link, or tap the map to drop the 🏁 flag.</p>
+      <button id="createBtn" class="btn primary block lg">Create ride 🚀</button>
+    </section>
+
+    <section class="card hidden" id="shareCard">
+      <div class="share-head">
+        <div class="big-emoji">🎉</div>
+        <div>
+          <h2 id="shareTitle">Ride is ready!</h2>
+          <p class="muted">Send this link to the group — anyone who opens it shows up on the map.</p>
+        </div>
+      </div>
+      <div class="code-box">Ride code <strong id="rideCode"></strong></div>
+      <div class="link-row">
+        <input id="shareLink" readonly>
+        <button id="copyBtn" class="btn">Copy</button>
+      </div>
+      <div class="btn-row">
+        <a id="waBtn" class="btn wa" target="_blank" rel="noopener">WhatsApp</a>
+        <button id="nativeShareBtn" class="btn ghost">More…</button>
+      </div>
+      <a id="openRideBtn" class="btn primary block lg">Start riding →</a>
+    </section>
+
+    <section class="card">
+      <h2>Got a link or code?</h2>
+      <form id="joinForm" class="link-row">
+        <input id="joinCode" placeholder="Paste link or enter code" autocomplete="off" autocapitalize="characters">
+        <button class="btn primary">Join</button>
+      </form>
+    </section>
+
+    <footer class="foot">Maps © OpenStreetMap contributors · Free, no sign-up</footer>
+  </main>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="/common.js"></script>
+  <script src="/home.js"></script>
+</body>
+</html>

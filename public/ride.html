@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Ride Together</title>
+  <meta name="theme-color" content="#0b1020">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🏍️</text></svg>">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body class="ride">
+  <div class="ride-app">
+    <header class="topbar">
+      <a href="/" class="icon-btn" title="Home" aria-label="Home">←</a>
+      <div class="title">
+        <h1 id="rideTitle">Ride Together</h1>
+        <div class="sub"><span class="conn" id="connDot"></span><span id="rideSub">Connecting…</span></div>
+      </div>
+      <button class="btn primary sm" id="shareBtn">Invite</button>
+    </header>
+
+    <div class="stage">
+      <div id="map"></div>
+
+      <div class="fabs">
+        <button class="fab" id="meBtn" title="Center on me" aria-label="Center on me">◎</button>
+        <button class="fab" id="fitBtn" title="Show everyone" aria-label="Show everyone">⤢</button>
+        <button class="fab" id="destBtn" title="Show destination" aria-label="Show destination">🏁</button>
+      </div>
+
+      <div class="pick-banner hidden" id="pickBanner">
+        Tap the map to set the destination
+        <button class="btn sm ghost" id="pickCancel">Cancel</button>
+      </div>
+
+      <section class="sheet collapsed" id="sheet">
+        <button class="handle" id="sheetHandle" aria-label="Expand or collapse"><span></span><em id="handleLabel">Riders · more</em></button>
+        <div class="sheet-body">
+          <div class="dest-card">
+            <div class="dest-flag">🏁</div>
+            <div class="dest-text">
+              <div class="label">Destination</div>
+              <div class="dest-name" id="destName">Not set yet</div>
+            </div>
+            <a class="btn sm" id="navBtn" target="_blank" rel="noopener">Navigate</a>
+          </div>
+
+          <div class="stats">
+            <div class="stat"><div class="v" id="statDist">–</div><div class="k">to go</div></div>
+            <div class="stat"><div class="v" id="statEta">–</div><div class="k">ETA</div></div>
+            <div class="stat"><div class="v" id="statSpeed">–</div><div class="k">km/h</div></div>
+          </div>
+
+          <div class="gps-warn hidden" id="gpsWarn"></div>
+
+          <div class="pings" id="pings">
+            <button data-ping="wait">✋<span>Wait</span></button>
+            <button data-ping="chai">☕<span>Chai</span></button>
+            <button data-ping="fuel">⛽<span>Fuel</span></button>
+            <button data-ping="regroup">📍<span>Regroup</span></button>
+            <button data-ping="sos" class="sos">🆘<span>SOS</span></button>
+          </div>
+
+          <div class="more">
+            <h3>Riders <span class="count" id="riderCount"></span></h3>
+            <ul class="riders" id="riders"></ul>
+
+            <div class="actions">
+              <button class="btn ghost" id="changeDestBtn">Change destination</button>
+              <button class="btn ghost" id="shareToggle">Pause my location</button>
+              <button class="btn ghost" id="trailToggle">Hide trails</button>
+              <button class="btn danger-ghost" id="leaveBtn">Leave ride</button>
+            </div>
+
+            <h3>Activity</h3>
+            <ul class="feed" id="feed"><li class="muted">Nothing yet.</li></ul>
+
+            <p class="tip">💡 Keep this screen open while riding — phones pause GPS for browser tabs in the background.</p>
+          </div>
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <!-- Join -->
+  <div class="modal hidden" id="joinModal">
+    <div class="modal-card">
+      <div class="big-emoji">🏍️</div>
+      <h2 id="joinTitle">Join the ride</h2>
+      <p class="muted" id="joinDest"></p>
+      <form id="joinForm">
+        <div class="field">
+          <label for="joinName">Your name</label>
+          <input id="joinName" placeholder="e.g. Rahul" maxlength="30" autocomplete="nickname" required>
+        </div>
+        <button class="btn primary block lg">Join &amp; share my location</button>
+      </form>
+      <p class="fine">Your live location is visible only to people with this ride's link.</p>
+    </div>
+  </div>
+
+  <!-- Not found -->
+  <div class="modal hidden" id="notFoundModal">
+    <div class="modal-card">
+      <div class="big-emoji">🤷</div>
+      <h2>Ride not found</h2>
+      <p class="muted">This ride has ended or the link is wrong. Ask your friend for a fresh link.</p>
+      <a href="/" class="btn primary block lg">Start a new ride</a>
+    </div>
+  </div>
+
+  <!-- Invite -->
+  <div class="modal hidden" id="shareModal">
+    <div class="modal-card">
+      <button class="close" data-close aria-label="Close">×</button>
+      <h2>Invite the gang</h2>
+      <div class="code-box">Ride code <strong id="shareCode"></strong></div>
+      <div class="link-row">
+        <input id="shareLink" readonly>
+        <button id="copyBtn" class="btn">Copy</button>
+      </div>
+      <div class="btn-row">
+        <a id="waBtn" class="btn wa" target="_blank" rel="noopener">WhatsApp</a>
+        <button id="nativeShareBtn" class="btn ghost">More…</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Destination -->
+  <div class="modal hidden" id="destModal">
+    <div class="modal-card">
+      <button class="close" data-close aria-label="Close">×</button>
+      <h2>Set destination</h2>
+      <p class="muted">Everyone in the ride will see the new destination.</p>
+      <div class="search">
+        <input id="destSearch" placeholder="Search, or paste a Google Maps link" autocomplete="off">
+        <ul class="results" id="destResults"></ul>
+      </div>
+      <div class="chips" id="savedChips"></div>
+      <div class="or">or</div>
+      <button class="btn ghost block" id="pickOnMapBtn">📍 Tap on the map</button>
+    </div>
+  </div>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="/common.js"></script>
+  <script src="/ride.js"></script>
+</body>
+</html>
