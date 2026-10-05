@@ -61,10 +61,10 @@ async function reverseGeocode(lat, lng) {
 // Places the group uses often. They show as one-tap chips, and the first one is the default destination.
 const SAVED_PLACES = [
   {
-    name: 'Starlight House, Goyal Farms',
-    lat: 21.2696694,
-    lng: 78.7852284,
-    label: 'Starlight House by Goyal Farms and Resorts, 105, beside Ambika Farms, behind IMT College, Dorli (Bk), Maharashtra 441502',
+    name: 'Sai Carnation Farms, Chicholi',
+    lat: 21.1114799,
+    lng: 78.7818268,
+    label: 'Sai Carnation Farms, Chicholi Gaon, near Fun N Food, Nagpur, Maharashtra 440023',
   },
 ];
 
