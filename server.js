@@ -26,6 +26,19 @@ const TRAIL_MAX = 400;
 const TRAIL_MIN_STEP_KM = 0.015;
 const RIDE_TTL_MS = 24 * 60 * 60 * 1000;
 
+// Host tokens are an HMAC of the ride code, so they keep working after a restart as long as
+// RIDE_SECRET stays the same (Render generates it, see render.yaml).
+const RIDE_SECRET = process.env.RIDE_SECRET || crypto.randomBytes(32).toString('hex');
+const hostToken = (id) => crypto.createHmac('sha256', RIDE_SECRET).update(id).digest('base64url');
+function isHost(id, token) {
+  const a = Buffer.from(hostToken(id));
+  const b = Buffer.from(String(token || ''));
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
+}
+
+// Rides the host ended, so old share links can't bring them back. id -> endedAt
+const endedRides = new Map();
+
 // In-memory store. rides: code -> ride
 // ride = { id, name, destination, members: Map<memberId, member>, conns: Map<memberId, count>, lastActive }
 const rides = new Map();
@@ -92,11 +105,13 @@ function pickColor(ride) {
 app.post('/api/rides', (req, res) => {
   const { name, destination } = req.body || {};
   const ride = createRide(newCode(), name, destination);
-  res.json({ id: ride.id });
+  res.json({ id: ride.id, hostToken: hostToken(ride.id) });
 });
 
 app.get('/api/rides/:id', (req, res) => {
-  const ride = rides.get(String(req.params.id).toUpperCase());
+  const id = String(req.params.id).toUpperCase();
+  if (endedRides.has(id)) return res.status(410).json({ error: 'ended' });
+  const ride = rides.get(id);
   if (!ride) return res.status(404).json({ error: 'Ride not found' });
   res.json(rideView(ride));
 });
@@ -202,6 +217,7 @@ io.on('connection', (socket) => {
   socket.on('join', (payload, ack) => {
     const reply = typeof ack === 'function' ? ack : () => {};
     const id = str(payload?.rideId, 6).toUpperCase();
+    if (endedRides.has(id)) return reply({ error: 'ended' });
     let target = rides.get(id);
 
     // Server restarted / ride expired: rebuild it from the info carried in the share link.
@@ -227,6 +243,7 @@ io.on('connection', (socket) => {
       trail: [],
     };
     member.name = str(payload?.name, 30) || 'Rider';
+    member.host = isHost(ride.id, payload?.hostToken);
     member.online = true;
     member.sharing = payload?.sharing !== false;
     ride.members.set(memberId, member);
@@ -289,6 +306,18 @@ io.on('connection', (socket) => {
     io.to(ride.id).emit('ping', { kind, from: m.id, name: m.name, color: m.color, lat: m.lat, lng: m.lng, at: Date.now() });
   });
 
+  // Only the ride's creator (holder of the host token) can end it for everyone.
+  socket.on('end', (token) => {
+    if (!ride || !isHost(ride.id, token)) return;
+    const id = ride.id;
+    const by = ride.members.get(memberId)?.name || 'The host';
+    io.to(id).emit('ended', { by });
+    io.in(id).socketsLeave(id);
+    rides.delete(id);
+    endedRides.set(id, Date.now());
+    ride = null;
+  });
+
   socket.on('leave', () => {
     if (!ride || !ride.members.has(memberId)) return;
     detach();
@@ -310,6 +339,7 @@ io.on('connection', (socket) => {
 setInterval(() => {
   const cutoff = Date.now() - RIDE_TTL_MS;
   for (const [id, ride] of rides) if (ride.lastActive < cutoff) rides.delete(id);
+  for (const [id, at] of endedRides) if (at < cutoff) endedRides.delete(id);
 }, 60 * 60 * 1000).unref();
 
 function lanAddresses() {

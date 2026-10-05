@@ -40,6 +40,23 @@
     feed: [],
   };
 
+  // Turn-by-turn navigation (see nav.js). target: { kind: 'dest' } or { kind: 'member', id }
+  const nav = {
+    active: false,
+    target: null,
+    model: null,
+    pr: null,
+    busy: false,
+    offCount: 0,
+    lastRoute: 0,
+    announced: new Map(), // step index -> Set of spoken stages
+    follow: true,
+    voice: localStorage.getItem('rt_voice') || 'en', // 'en' | 'hi' | 'off'
+    line: null,
+    retryTimer: null,
+  };
+  const hostKey = `rt_host_${rideId}`;
+
   const map = createMap('map');
   let destMarker = null;
   let routeLine = null;
@@ -86,6 +103,9 @@
   function remainingFor(m) {
     const d = dest();
     if (!d || !hasPos(m)) return null;
+    if (isMe(m) && nav.active && nav.pr && nav.target.kind === 'dest') {
+      return { km: nav.pr.remaining / 1000, eta: nav.pr.remainingTime, road: true };
+    }
     if (isMe(m) && state.myRoute && !state.myRoute.failed && state.myRoute.destKey === destKey(d)) {
       return adjustedRoad(state.myRoute, m, d);
     }
@@ -160,6 +180,7 @@
       destMarker = null;
       $('destName').textContent = 'Not set yet — tap “Change destination”';
       $('navBtn').classList.add('hidden');
+      $('gmapsBtn').classList.add('hidden');
       return;
     }
     if (!destMarker) destMarker = L.marker([d.lat, d.lng], { icon: destIcon, zIndexOffset: 500 }).addTo(map);
@@ -167,8 +188,10 @@
     destMarker.unbindTooltip().bindTooltip(escapeHtml(d.label), { direction: 'top', offset: [0, -48] });
     $('destName').textContent = d.label;
     $('destName').title = d.label;
-    $('navBtn').href = navigateHref(d);
+    $('gmapsBtn').href = navigateHref(d);
+    $('gmapsBtn').classList.remove('hidden');
     $('navBtn').classList.remove('hidden');
+    renderNavButton();
   }
 
   function focusMember(id) {
@@ -176,14 +199,22 @@
     if (!hasPos(m)) return toast(`${m?.name || 'Rider'} has no location yet`);
     map.flyTo([m.lat, m.lng], Math.max(map.getZoom(), 15), { duration: 0.7 });
     const rem = remainingFor(m);
-    const html = `
-      <div class="popup">
-        <strong style="color:${m.color}">${escapeHtml(isMe(m) ? `${m.name} (You)` : m.name)}</strong>
-        <div>${escapeHtml(statusLine(m))}</div>
-        ${rem ? `<div>${rem.road ? '' : '≈ '}${fmtKm(rem.km)} to destination</div>` : ''}
-        ${isMe(m) ? '' : `<a target="_blank" rel="noopener" href="${navigateHref(m)}">Navigate to ${escapeHtml(m.name)} →</a>`}
-      </div>`;
-    L.popup({ offset: [0, -14] }).setLatLng([m.lat, m.lng]).setContent(html).openOn(map);
+    const el = document.createElement('div');
+    el.className = 'popup';
+    el.innerHTML = `
+      <strong style="color:${m.color}">${escapeHtml(isMe(m) ? `${m.name} (You)` : m.name)}</strong>
+      <div>${escapeHtml(statusLine(m))}</div>
+      ${rem ? `<div>${rem.road ? '' : '≈ '}${fmtKm(rem.km)} to destination</div>` : ''}
+      ${isMe(m) ? '' : `<div class="popup-actions">
+        <button class="btn sm primary" data-go>▶ Go to ${escapeHtml(m.name)}</button>
+        <a target="_blank" rel="noopener" href="${navigateHref(m)}">Google Maps ↗</a>
+      </div>`}`;
+    // Leaflet stops clicks inside popups from bubbling, so wire the button directly.
+    el.querySelector('[data-go]')?.addEventListener('click', () => {
+      map.closePopup();
+      startNav({ kind: 'member', id: m.id });
+    });
+    L.popup({ offset: [0, -14] }).setLatLng([m.lat, m.lng]).setContent(el).openOn(map);
   }
 
   function fitAll() {
@@ -224,7 +255,7 @@
     const speed = state.myPos?.speed;
     $('statSpeed').textContent = speed != null ? Math.round(speed * 3.6) : '–';
 
-    if (rem && rem.km <= ARRIVED_KM && !state.arrived) {
+    if (rem && rem.km <= ARRIVED_KM && !state.arrived && !nav.active) {
       state.arrived = true;
       toast("🏁 You've reached the destination!", { ms: 5000 });
     }
@@ -248,6 +279,7 @@
           <div class="rider-info">
             <div class="rider-name">${escapeHtml(m.name)}
               ${isMe(m) ? '<span class="tag">You</span>' : ''}
+              ${m.host ? '<span class="tag host">👑 Host</span>' : ''}
               ${leader && leader.m.id === m.id && rows.length > 1 ? '<span class="tag lead">🏆 Leading</span>' : ''}
             </div>
             <div class="rider-meta">${escapeHtml(statusLine(m))}</div>
@@ -277,6 +309,7 @@
 
   // ---------- routing (OSRM public server; falls back to straight-line distance) ----------
   async function refreshMyRoute(force = false) {
+    if (nav.active) return; // navigation draws its own route
     const d = dest();
     const p = state.myPos;
     if (!d || !p) {
@@ -294,7 +327,7 @@
       const res = await fetch(`https://router.project-osrm.org/route/v1/driving/${from.lng},${from.lat};${d.lng},${d.lat}?overview=full&geometries=geojson`);
       const data = await res.json();
       if (data.code !== 'Ok' || !data.routes?.length) throw new Error('no route');
-      if (destKey(dest()) !== key) return; // destination changed meanwhile
+      if (destKey(dest()) !== key || nav.active) return; // destination changed or navigation started meanwhile
       const route = data.routes[0];
       const latlngs = route.geometry.coordinates.map(([x, y]) => [y, x]);
       if (!routeLine) routeLine = L.polyline(latlngs, { color: ROUTE_COLOR, weight: 6, opacity: 0.7 }).addTo(map);
@@ -377,7 +410,12 @@
 
     if (!state.fitted && state.joined) state.fitted = fitAll();
     sendLocation();
-    refreshMyRoute();
+    if (nav.active) {
+      if (nav.model) updateNav();
+      else reroute('start');
+    } else {
+      refreshMyRoute();
+    }
     renderStats();
   }
 
@@ -406,6 +444,227 @@
       }
     } catch { /* not allowed, fine */ }
   }
+
+  // ---------- turn-by-turn navigation ----------
+  function navTargetPos() {
+    if (!nav.target) return null;
+    if (nav.target.kind === 'dest') return dest();
+    const m = state.members.get(nav.target.id);
+    return hasPos(m) ? { lat: m.lat, lng: m.lng } : null;
+  }
+
+  function say(text, queue = false) {
+    if (nav.voice === 'off' || !('speechSynthesis' in window) || !text) return;
+    const lang = nav.voice === 'hi' ? 'hi-IN' : 'en-IN';
+    const u = new SpeechSynthesisUtterance(text);
+    u.lang = lang;
+    const voices = speechSynthesis.getVoices();
+    u.voice = voices.find((v) => v.lang === lang) || voices.find((v) => v.lang.startsWith(lang.slice(0, 2))) || null;
+    if (!queue) speechSynthesis.cancel();
+    speechSynthesis.speak(u);
+  }
+
+  // iOS only lets a page speak after it has spoken once inside a tap.
+  function unlockSpeech() {
+    try {
+      const u = new SpeechSynthesisUtterance(' ');
+      u.volume = 0;
+      speechSynthesis.speak(u);
+    } catch { /* no speech support */ }
+  }
+
+  function renderNavButton() {
+    const b = $('navBtn');
+    b.textContent = nav.active ? 'End' : '▶ Go';
+    b.classList.toggle('danger', nav.active);
+    b.classList.toggle('primary', !nav.active);
+  }
+
+  function renderVoiceBtn() {
+    $('voiceBtn').textContent = { en: '🔊 EN', hi: '🔊 हिं', off: '🔇 Off' }[nav.voice];
+  }
+
+  function startNav(target) {
+    if (!navigator.geolocation || !window.isSecureContext) return toast('Navigation needs location access (HTTPS)');
+    unlockSpeech();
+    Object.assign(nav, { active: true, target, model: null, pr: null, follow: true, offCount: 0, announced: new Map() });
+    document.body.classList.add('navigating');
+    $('navBanner').classList.remove('hidden');
+    $('sheet').classList.add('collapsed');
+    $('meBtn').classList.remove('attention');
+    routeLine?.remove();
+    map.closePopup();
+    renderNavButton();
+    renderVoiceBtn();
+    renderNavBanner();
+    if (state.myPos) {
+      map.setView([state.myPos.lat, state.myPos.lng], 17);
+      reroute('start');
+    }
+  }
+
+  function stopNav() {
+    if (!nav.active) return;
+    nav.active = false;
+    clearTimeout(nav.retryTimer);
+    nav.line?.remove();
+    Object.assign(nav, { line: null, model: null, pr: null, target: null });
+    if ('speechSynthesis' in window) speechSynthesis.cancel();
+    document.body.classList.remove('navigating');
+    $('navBanner').classList.add('hidden');
+    $('meBtn').classList.remove('attention');
+    renderNavButton();
+    routeLine?.addTo(map);
+    refreshMyRoute(true);
+    renderStats();
+  }
+
+  async function reroute(reason) {
+    const from = state.myPos;
+    const to = navTargetPos();
+    if (!nav.active || nav.busy || !from || !to) return;
+    nav.busy = true;
+    nav.lastRoute = Date.now();
+    clearTimeout(nav.retryTimer);
+    if (reason === 'offroute') {
+      $('navInstr').textContent = 'Rerouting…';
+      say(nav.voice === 'hi' ? 'नया रास्ता बनाया जा रहा है' : 'Rerouting');
+    }
+    let ok = false;
+    try {
+      const heading = from.speed != null && from.speed > 2 ? from.heading : null;
+      const model = await RideNav.fetchRoute(from, to, heading);
+      if (nav.active) {
+        Object.assign(nav, { model, announced: new Map(), offCount: 0 });
+        if (!nav.line) nav.line = L.polyline([], { color: '#1a73e8', weight: 8, opacity: 0.9, lineCap: 'round' }).addTo(map);
+        ok = true;
+      }
+    } catch {
+      if (nav.active) {
+        $('navInstr').textContent = "Couldn't get a route. Retrying…";
+        nav.retryTimer = setTimeout(() => reroute('retry'), 10000);
+      }
+    } finally {
+      nav.busy = false;
+    }
+    if (ok) updateNav(reason === 'start');
+  }
+
+  function updateNav(isStart = false) {
+    const pos = state.myPos;
+    const m = nav.model;
+    if (!nav.active || !m || !pos) return;
+    const pr = RideNav.progress(m, pos);
+    nav.pr = pr;
+    nav.line.setLatLngs(RideNav.remainingLine(m, pr));
+
+    // Off the route for two fixes in a row (ignoring very rough GPS): get a new route.
+    if (pos.accuracy == null || pos.accuracy < 80) nav.offCount = pr.offRoute > 50 ? nav.offCount + 1 : 0;
+    if (nav.offCount >= 2 && Date.now() - nav.lastRoute > 8000) {
+      reroute('offroute');
+      return;
+    }
+    // Following a friend: refresh the route once they've moved away from where it ends.
+    const to = navTargetPos();
+    if (nav.target.kind === 'member' && to && distanceKm(to, m.end) > 0.15 && Date.now() - nav.lastRoute > 30000) reroute('target');
+
+    if (pr.remaining < 30 || (to && distanceKm(pos, to) < 0.03)) {
+      const who = nav.target.kind === 'member' ? state.members.get(nav.target.id)?.name : null;
+      if (who) say(nav.voice === 'hi' ? `आप ${who} के पास पहुँच गए हैं` : `You have reached ${who}`);
+      else say(nav.voice === 'hi' ? 'आप अपनी मंज़िल पर पहुँच गए हैं' : 'You have arrived at your destination');
+      toast(who ? `📍 You've reached ${who}` : "🏁 You've arrived!", { ms: 5000 });
+      if (!who) state.arrived = true;
+      stopNav();
+      return;
+    }
+
+    renderNavBanner();
+    announce(pr, isStart);
+    followCamera();
+    renderStats();
+  }
+
+  // Spoken prompts: once far out, once closer, and once right at the turn.
+  function announce(pr, isStart) {
+    const lang = nav.voice;
+    const v = Math.max(state.myPos.speed || 0, 5);
+    const clamp = (x, lo, hi) => Math.min(hi, Math.max(lo, x));
+    const far = clamp(v * 30, 400, 1000);
+    const mid = clamp(v * 12, 120, 300);
+    const near = clamp(v * 4, 25, 60);
+    const d = pr.distToNext;
+    const st = pr.next;
+    const done = nav.announced.get(pr.nextIdx) || new Set();
+    nav.announced.set(pr.nextIdx, done);
+    const then = pr.afterGap < 150 ? pr.after : null;
+    const mark = (...stages) => stages.forEach((s) => done.add(s));
+
+    let text = null;
+    if (isStart) {
+      text = `${lang === 'hi' ? 'नेविगेशन शुरू। ' : 'Starting navigation. '}${RideNav.speech(st, d <= near ? null : d, lang)}`;
+      mark('far');
+      if (d <= mid) mark('mid');
+      if (d <= near) mark('near');
+    } else if (d <= near && !done.has('near') && st.type !== 'arrive') {
+      text = RideNav.speech(st, null, lang, then);
+      mark('near', 'mid', 'far');
+    } else if (d <= mid && d > near && !done.has('mid')) {
+      text = RideNav.speech(st, d, lang, then);
+      mark('mid', 'far');
+    } else if (d <= far && d > mid + 100 && !done.has('far')) {
+      text = RideNav.speech(st, d, lang);
+      mark('far');
+    } else if (d > 2000 && !done.size) {
+      // Just finished a turn and the next one is far away: queue it after the turn prompt.
+      mark('cont');
+      return say(RideNav.continueFor(d, lang), true);
+    }
+    if (text) say(text);
+  }
+
+  function fmtNavDist(m) {
+    if (m < 1000) return `${m < 100 ? Math.round(m / 5) * 5 : Math.round(m / 10) * 10} m`;
+    return `${(m / 1000).toFixed(m < 10000 ? 1 : 0)} km`;
+  }
+
+  function renderNavBanner() {
+    const pr = nav.pr;
+    if (!pr) {
+      $('navIcon').innerHTML = '';
+      $('navDist').textContent = '';
+      $('navInstr').textContent = state.myPos ? 'Finding the best route…' : 'Waiting for GPS…';
+      $('navThen').classList.add('hidden');
+      $('navEta').textContent = '';
+    } else {
+      $('navIcon').innerHTML = RideNav.icon(pr.next);
+      $('navDist').textContent = fmtNavDist(pr.distToNext);
+      $('navInstr').textContent = RideNav.textEn(pr.next);
+      const showThen = pr.after && pr.afterGap < 300;
+      $('navThen').classList.toggle('hidden', !showThen);
+      if (showThen) $('navThen').innerHTML = `Then ${RideNav.icon(pr.after)} <span>${escapeHtml(RideNav.textEn(pr.after))}</span>`;
+      const arriveAt = new Date(Date.now() + pr.remainingTime * 1000).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+      $('navEta').textContent = `${fmtKm(pr.remaining / 1000)} · ${fmtDuration(pr.remainingTime)} · arrive ${arriveAt}`;
+    }
+    $('navBanner').parentElement.style.setProperty('--nav-h', `${$('navBanner').offsetHeight}px`);
+  }
+
+  // Keep me in the lower part of the visible map so more of the road ahead shows.
+  function followCamera() {
+    if (!nav.follow || !state.myPos) return;
+    const zoom = map.getZoom() < 14 ? 17 : map.getZoom();
+    const size = map.getSize();
+    const top = $('navBanner').offsetHeight + 20;
+    const bottom = size.y - (window.innerWidth < 900 ? $('sheet').offsetHeight : 0);
+    const offset = top + (bottom - top) * 0.68 - size.y / 2;
+    const center = map.project([state.myPos.lat, state.myPos.lng], zoom).subtract([0, offset]);
+    map.setView(map.unproject(center, zoom), zoom, { animate: true });
+  }
+
+  map.on('dragstart', () => {
+    if (!nav.active) return;
+    nav.follow = false;
+    $('meBtn').classList.add('attention');
+  });
 
   // ---------- alerts ----------
   let audioCtx = null;
@@ -439,8 +698,9 @@
   socket.on('connect', () => {
     socket.emit(
       'join',
-      { rideId, memberId, name: localStorage.getItem('rt_name'), sharing: state.sharing, seed: seed() },
+      { rideId, memberId, name: localStorage.getItem('rt_name'), sharing: state.sharing, seed: seed(), hostToken: localStorage.getItem(hostKey) },
       (res) => {
+        if (res?.error === 'ended') return showEnded();
         if (res?.error) {
           socket.disconnect();
           $('joinModal').classList.add('hidden');
@@ -473,6 +733,7 @@
     renderDestination();
     renderAll();
     updateShareToggle();
+    $('endRideBtn').classList.toggle('hidden', !state.members.get(memberId)?.host);
 
     if (first) {
       addFeed('You joined the ride');
@@ -511,8 +772,23 @@
     state.members.delete(id);
     state.roads.delete(id);
     removeMemberLayers(id);
+    if (nav.active && nav.target.kind === 'member' && nav.target.id === id) stopNav();
     renderAll();
   });
+
+  function showEnded(by) {
+    stopNav();
+    socket.disconnect();
+    if (watchId != null) navigator.geolocation.clearWatch(watchId);
+    watchId = null;
+    localStorage.removeItem(hostKey);
+    $('endedText').textContent = by ? `${by} ended this ride. Thanks for riding together! 🏍️` : 'This ride has ended.';
+    $('joinModal').classList.add('hidden');
+    closeModals();
+    openModal('endedModal');
+  }
+
+  socket.on('ended', ({ by }) => showEnded(by));
 
   socket.on('destination', ({ destination, by }) => {
     state.ride.destination = destination;
@@ -525,6 +801,10 @@
     addFeed(`${by} changed destination to ${destination.label}`);
     refreshMyRoute(true);
     refreshRoads();
+    if (nav.active && nav.target.kind === 'dest') {
+      nav.model = null;
+      reroute('start');
+    }
     renderAll();
   });
 
@@ -574,7 +854,29 @@
     openModal('shareModal');
   });
 
+  $('navBtn').addEventListener('click', () => {
+    if (nav.active) stopNav();
+    else if (dest()) startNav({ kind: 'dest' });
+  });
+  $('endNavBtn').addEventListener('click', stopNav);
+  $('voiceBtn').addEventListener('click', () => {
+    nav.voice = { en: 'hi', hi: 'off', off: 'en' }[nav.voice];
+    localStorage.setItem('rt_voice', nav.voice);
+    renderVoiceBtn();
+    say(nav.voice === 'hi' ? 'आवाज़ चालू' : 'Voice guidance on');
+  });
+
+  $('endRideBtn').addEventListener('click', () => {
+    if (!confirm('End this ride for everyone? Nobody will be able to rejoin with this link.')) return;
+    socket.emit('end', localStorage.getItem(hostKey));
+  });
+
   $('meBtn').addEventListener('click', () => {
+    if (nav.active) {
+      nav.follow = true;
+      $('meBtn').classList.remove('attention');
+      return followCamera();
+    }
     if (state.myPos) map.flyTo([state.myPos.lat, state.myPos.lng], Math.max(map.getZoom(), 16), { duration: 0.6 });
     else toast('Waiting for your GPS…');
   });
@@ -686,7 +988,10 @@
     }
   });
 
-  window.addEventListener('resize', () => map.invalidateSize());
+  window.addEventListener('resize', () => {
+    map.invalidateSize();
+    if (nav.active) followCamera();
+  });
 
   // Periodic work: refresh "x min ago" labels, keep-alive location, road distances.
   setInterval(() => { if (state.joined) renderAll(); }, 5000);
@@ -701,6 +1006,7 @@
     let info = null;
     try {
       const res = await fetch(`/api/rides/${rideId}`);
+      if (res.status === 410) return showEnded();
       if (res.ok) info = await res.json();
     } catch { /* offline; the socket will retry */ }
 

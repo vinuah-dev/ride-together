@@ -29,6 +29,22 @@
         <button class="fab" id="destBtn" title="Show destination" aria-label="Show destination">🏁</button>
       </div>
 
+      <div class="nav-banner hidden" id="navBanner">
+        <div class="nav-main">
+          <div class="nav-icon" id="navIcon"></div>
+          <div class="nav-text">
+            <div class="nav-dist" id="navDist"></div>
+            <div class="nav-instr" id="navInstr">Finding the best route…</div>
+          </div>
+        </div>
+        <div class="nav-then hidden" id="navThen"></div>
+        <div class="nav-foot">
+          <span id="navEta"></span>
+          <button class="nav-chip" id="voiceBtn">🔊 EN</button>
+          <button class="nav-chip end" id="endNavBtn">End</button>
+        </div>
+      </div>
+
       <div class="pick-banner hidden" id="pickBanner">
         Tap the map to set the destination
         <button class="btn sm ghost" id="pickCancel">Cancel</button>
@@ -43,7 +59,7 @@
               <div class="label">Destination</div>
               <div class="dest-name" id="destName">Not set yet</div>
             </div>
-            <a class="btn sm" id="navBtn" target="_blank" rel="noopener">Navigate</a>
+            <button class="btn sm primary" id="navBtn">▶ Go</button>
           </div>
 
           <div class="stats">
@@ -70,7 +86,9 @@
               <button class="btn ghost" id="changeDestBtn">Change destination</button>
               <button class="btn ghost" id="shareToggle">Pause my location</button>
               <button class="btn ghost" id="trailToggle">Hide trails</button>
-              <button class="btn danger-ghost" id="leaveBtn">Leave ride</button>
+              <a class="btn ghost" id="gmapsBtn" target="_blank" rel="noopener">Google Maps ↗</a>
+              <button class="btn danger-ghost wide" id="leaveBtn">Leave ride</button>
+              <button class="btn danger wide hidden" id="endRideBtn">🏁 End ride for everyone</button>
             </div>
 
             <h3>Activity</h3>
@@ -106,6 +124,16 @@
       <div class="big-emoji">🤷</div>
       <h2>Ride not found</h2>
       <p class="muted">This ride has ended or the link is wrong. Ask your friend for a fresh link.</p>
+      <a href="/" class="btn primary block lg">Start a new ride</a>
+    </div>
+  </div>
+
+  <!-- Ride ended -->
+  <div class="modal hidden" id="endedModal">
+    <div class="modal-card">
+      <div class="big-emoji">🏁</div>
+      <h2>Ride ended</h2>
+      <p class="muted" id="endedText">The host ended this ride.</p>
       <a href="/" class="btn primary block lg">Start a new ride</a>
     </div>
   </div>
@@ -146,6 +174,7 @@
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script src="/socket.io/socket.io.js"></script>
   <script src="/common.js"></script>
+  <script src="/nav.js"></script>
   <script src="/ride.js"></script>
 </body>
 </html>

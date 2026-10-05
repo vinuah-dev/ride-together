@@ -6,3 +6,6 @@ services:
     buildCommand: npm install
     startCommand: npm start
     healthCheckPath: /healthz
+    envVars:
+      - key: RIDE_SECRET
+        generateValue: true

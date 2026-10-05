@@ -69,7 +69,9 @@
         body: JSON.stringify({ name: rideName, destination: dest }),
       });
       if (!res.ok) throw new Error('create failed');
-      const { id } = await res.json();
+      const { id, hostToken } = await res.json();
+      // Marks this browser as the ride's host (lets it end the ride for everyone).
+      localStorage.setItem(`rt_host_${id}`, hostToken);
       showShare(id, rideName);
     } catch {
       toast('Could not create the ride. Is the server running?', { type: 'error' });
